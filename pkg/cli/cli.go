@@ -34,6 +34,8 @@ var scopes = []string{
 	"user-read-playback-state",
 	"user-modify-playback-state",
 	"user-read-currently-playing",
+	"user-library-read",
+	"user-library-modify",
 }
 
 type config struct {
@@ -115,6 +117,36 @@ type playlist struct {
 	} `json:"owner"`
 }
 
+type savedTracksResponse struct {
+	Href  string          `json:"href"`
+	Items []savedTrackItem `json:"items"`
+	Limit int             `json:"limit"`
+	Next  string          `json:"next"`
+	Offset int            `json:"offset"`
+	Previous string       `json:"previous"`
+	Total int             `json:"total"`
+}
+
+type savedTrackItem struct {
+	AddedAt string `json:"added_at"`
+	Track   track  `json:"track"`
+}
+
+type savedAlbumsResponse struct {
+	Href  string          `json:"href"`
+	Items []savedAlbumItem `json:"items"`
+	Limit int             `json:"limit"`
+	Next  string          `json:"next"`
+	Offset int            `json:"offset"`
+	Previous string       `json:"previous"`
+	Total int             `json:"total"`
+}
+
+type savedAlbumItem struct {
+	AddedAt string `json:"added_at"`
+	Album   album  `json:"album"`
+}
+
 func Run(args []string) error {
 	if len(args) == 0 {
 		printUsage()
@@ -136,6 +168,14 @@ func Run(args []string) error {
 		return cmdNext()
 	case "use-device":
 		return cmdUseDevice(args[1:])
+	case "save":
+		return cmdSave(args[1:])
+	case "unsave":
+		return cmdUnsave(args[1:])
+	case "library":
+		return cmdLibrary(args[1:])
+	case "check":
+		return cmdCheck(args[1:])
 	case "help", "-h", "--help":
 		printUsage()
 		return nil
@@ -157,6 +197,10 @@ Usage:
   sp-cli play [spotify:track:...|spotify:album:...|spotify:playlist:...]
   sp-cli pause
   sp-cli next
+  sp-cli save <spotify:track:...|spotify:album:...>
+  sp-cli unsave <spotify:track:...|spotify:album:...>
+  sp-cli library [--type track|album] [--limit N]
+  sp-cli check <spotify:track:...|spotify:album:...>
 
 Examples:
   sp-cli auth
@@ -417,6 +461,148 @@ func cmdNext() error {
 	}
 	path := apiBaseURL + "/me/player/next?device_id=" + url.QueryEscape(deviceID)
 	return client.doJSON(http.MethodPost, path, nil, nil)
+}
+
+func cmdSave(args []string) error {
+	if len(args) == 0 {
+		return errors.New("usage: sp-cli save <spotify:track:...|spotify:album:...>...")
+	}
+	return modifyLibrary(args, true)
+}
+
+func cmdUnsave(args []string) error {
+	if len(args) == 0 {
+		return errors.New("usage: sp-cli unsave <spotify:track:...|spotify:album:...>...")
+	}
+	return modifyLibrary(args, false)
+}
+
+func modifyLibrary(uris []string, save bool) error {
+	for _, uri := range uris {
+		if !isValidSpotifyURI(uri) {
+			return fmt.Errorf("invalid spotify uri: %s", uri)
+		}
+	}
+
+	cfg, err := loadConfig()
+	if err != nil {
+		return err
+	}
+	client := newSpotifyClient(cfg)
+
+	method := http.MethodPut
+	if !save {
+		method = http.MethodDelete
+	}
+
+	q := url.Values{}
+	q.Set("uris", strings.Join(uris, ","))
+	endpoint := apiBaseURL + "/me/library?" + q.Encode()
+
+	return client.doJSON(method, endpoint, nil, nil)
+}
+
+func cmdLibrary(args []string) error {
+	libraryType := "track"
+	limit := 20
+
+	i := 0
+	for i < len(args) {
+		switch args[i] {
+		case "--type":
+			if i+1 >= len(args) {
+				return errors.New("--type requires track or album")
+			}
+			libraryType = args[i+1]
+			i += 2
+		case "--limit":
+			if i+1 >= len(args) {
+				return errors.New("--limit requires a number")
+			}
+			fmt.Sscanf(args[i+1], "%d", &limit)
+			i += 2
+		default:
+			return fmt.Errorf("unknown flag: %s", args[i])
+		}
+	}
+
+	if libraryType != "track" && libraryType != "album" {
+		return errors.New("library type must be track or album")
+	}
+	if limit < 1 || limit > 50 {
+		limit = 20
+	}
+
+	cfg, err := loadConfig()
+	if err != nil {
+		return err
+	}
+	client := newSpotifyClient(cfg)
+
+	q := url.Values{}
+	q.Set("limit", fmt.Sprintf("%d", limit))
+
+	switch libraryType {
+	case "track":
+		var resp savedTracksResponse
+		if err := client.getJSON(apiBaseURL+"/me/tracks?"+q.Encode(), &resp); err != nil {
+			return err
+		}
+		if len(resp.Items) == 0 {
+			fmt.Println("no saved tracks")
+			return nil
+		}
+		for _, item := range resp.Items {
+			fmt.Printf("%s | %s | %s | %s\n", item.Track.Name, joinArtistNames(item.Track.Artists), item.Track.Album.Name, item.Track.URI)
+		}
+	case "album":
+		var resp savedAlbumsResponse
+		if err := client.getJSON(apiBaseURL+"/me/albums?"+q.Encode(), &resp); err != nil {
+			return err
+		}
+		if len(resp.Items) == 0 {
+			fmt.Println("no saved albums")
+			return nil
+		}
+		for _, item := range resp.Items {
+			fmt.Printf("%s | %s | %s | %s\n", item.Album.Name, joinArtistNames(item.Album.Artists), item.Album.AlbumType, item.Album.URI)
+		}
+	}
+	return nil
+}
+
+func cmdCheck(args []string) error {
+	if len(args) == 0 {
+		return errors.New("usage: sp-cli check <spotify:track:...|spotify:album:...>...")
+	}
+
+	cfg, err := loadConfig()
+	if err != nil {
+		return err
+	}
+	client := newSpotifyClient(cfg)
+
+	q := url.Values{}
+	q.Set("uris", strings.Join(args, ","))
+	endpoint := apiBaseURL + "/me/library/contains?" + q.Encode()
+
+	var results []bool
+	if err := client.getJSON(endpoint, &results); err != nil {
+		return err
+	}
+
+	for i, uri := range args {
+		status := "not saved"
+		if results[i] {
+			status = "saved"
+		}
+		fmt.Printf("%s: %s\n", uri, status)
+	}
+	return nil
+}
+
+func isValidSpotifyURI(uri string) bool {
+	return strings.HasPrefix(uri, "spotify:")
 }
 
 type spotifyClient struct {

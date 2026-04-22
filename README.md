@@ -9,6 +9,8 @@ Small Spotify CLI for staying in the terminal while using the native Spotify app
 - Lists available Spotify devices
 - Searches tracks, albums, and playlists with clean terminal output
 - Plays tracks, albums, and playlists from the command line
+- Saves and removes tracks and albums from Your Library
+- Lists saved tracks and albums, and checks whether a given item is saved
 
 This CLI uses the Spotify Web API. Audio still plays on the Spotify app, Web Player, or another Spotify Connect device.
 
@@ -65,6 +67,12 @@ sp-cli play spotify:playlist:37i9dQZF1DXcBWIGoYBM5M
 sp-cli play
 sp-cli pause
 sp-cli next
+sp-cli save spotify:track:39HrUxcvKF3jtLz7fUDWXc
+sp-cli save spotify:album:2CVV8PtUYYsux8XOzWkCP0
+sp-cli unsave spotify:track:39HrUxcvKF3jtLz7fUDWXc
+sp-cli library
+sp-cli library --type album --limit 10
+sp-cli check spotify:track:39HrUxcvKF3jtLz7fUDWXc
 ```
 
 ## Environment Variables
@@ -101,3 +109,6 @@ go test ./...
 - `sp-cli search` defaults to `track`, `album`, and `playlist`; use `--type` to narrow results
 - `sp-cli use-device` saves a preferred device id
 - If no preferred device is set, the CLI uses the active device or the first available one
+- `sp-cli save` and `unsave` accept `spotify:track:...` or `spotify:album:...` URIs
+- `sp-cli library` lists saved items; defaults to `--type track` with a limit of 20
+- `sp-cli check` tells you whether the given URI is saved in Your Library
